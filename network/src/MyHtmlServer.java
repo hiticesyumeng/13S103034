@@ -1,182 +1,176 @@
-import java.io.BufferedReader;
+
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 
 public class MyHtmlServer {
-	
-	public static void main(String[] args) throws IOException {
-		int port=80;
-		if(args.length>0)
-			port=Integer.valueOf(args[0]);
-		new MyHtmlServer().start(port);
-
-	}
-	
-	
-	public void start(int port) throws IOException {
-		ServerSocket server = new ServerSocket(port);
-		System.out.println("server start at "+port+"...........");
-		while (true) {
-			Socket client = server.accept();
-			ServerThread serverthread = new ServerThread(client);
-			serverthread.start();
-		}
-	}
-
-	
-	class ServerThread extends Thread {
-		Socket client;
-
-		public ServerThread(Socket client) {
-			this.client = client;
-		}
+	//指定80端口启动http服务器，每收到一个请求就创建一个服务器响应线程
+	public MyHtmlServer(){
+		ServerSocket server;
+		try {
+			server = new ServerSocket(80);
 		
-		
-		public  byte[] getFileByte(String filename) throws IOException
-		{
-			ByteArrayOutputStream baos=new ByteArrayOutputStream();
-			File file=new File(filename);
-			FileInputStream fis=new FileInputStream(file);
-			byte[] b=new byte[1000];
-			int read;
-			while((read=fis.read(b))!=-1)
-			{
-				baos.write(b,0,read);
+			System.out.println("server start at 80 port...........");
+			while (true) {
+				Socket soc = server.accept();
+				ServerThread s = new ServerThread(soc);
+				s.start();
 			}
-			fis.close();
-			baos.close();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	public MyHtmlServer(boolean test){
+		testThread = new ServerThread(null);
+	}
+	
+	public ServerThread testThread;
+
+	//服务器响应线程
+	class ServerThread extends Thread {
+		Socket soc;
+		public ServerThread(Socket soc) {
+			this.soc = soc;
+		}
+		
+		//读取文件内容，转化为byte数组
+		public  byte[] getFileByte(String filename) {
+			ByteArrayOutputStream baos=new ByteArrayOutputStream();
+			try {
+			
+				File file=new File(filename);
+				FileInputStream fis;
+				fis = new FileInputStream(file);
+				
+				byte[] b=new byte[1024];
+				int read = 0;
+				while((read=fis.read(b))!=-1)
+				{
+					baos.write(b,0,read);
+				}
+				fis.close();
+				baos.close();
+			} catch (FileNotFoundException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 			return baos.toByteArray();
 		}
 
-		
-		
-		private String getQueryResource(String queryurl)
-		{
+		//分析并规范化url，如请求带有参数，提取参数前内容，并规范url，最后 "/"要规范成"/test.html",如后缀为".htm"，转化成".html"
+		public String getQueryResource(String queryurl){
 			String queryresource=null;
+			//去掉参数
 			int index=queryurl.indexOf('?');
-			if(index!=-1)
-			{
+			if(index!=-1){
 				queryresource=queryurl.substring(0,queryurl.indexOf('?'));
-			}
-			else
+			}else{
 				queryresource=queryurl;
-			
-			index=queryresource.lastIndexOf("/");
-			if(index+1==queryresource.length())
-			{
-				queryresource=queryresource+"index.html";
 			}
-			else
-			{
-				String filename=queryresource.substring(index+1);
-				if(!filename.contains("."))
-					queryresource=queryresource+".html";
-			}			
+			//规范化
+			if(queryresource.endsWith("/")){
+				queryresource=queryresource+"test.html";
+			}else if(queryresource.endsWith("test")){
+				queryresource=queryresource+".html";
+			}else if(queryresource.endsWith(".htm")){
+				queryresource=queryresource+"l";
+			}
 			return queryresource;
-
-		}
-		
+		}	
 	
-		
-		private String getHead(String queryresource)
-		{
+		//根据用户请求的资源类型，设定http响应头的信息，判断用户请求文件类型
+		public String getHead(String queryresource){
 			String filename="";
 			int index=queryresource.lastIndexOf("/");
 			filename=queryresource.substring(index+1);
-			String[] filetypes=filename.split("\\.");
-			String filetype=filetypes[filetypes.length-1];
-			if(filetype.equals("html"))
-			{
+			String filetype=filename.substring(filename.indexOf(".")+1);
+			if(filetype.equals("html")){
 				return "HTTP/1.0200OK\n"+"Content-Type:text/html\n" + "Server:myserver\n" + "\n";
 			}
-			else if(filetype.equals("jpg")||filetype.equals("gif")||filetype.equals("png"))
-			{
+			else if(filetype.equals("jpg")||filetype.equals("gif")||filetype.equals("png")){
 				return "HTTP/1.0200OK\n"+"Content-Type:image/jpeg\n" + "Server:myserver\n" + "\n";
+			}else{
+				return null;
 			}
-			else return null;
-			
 		}
 
-		@Override
 		public void run() {
-			InputStream is;
 			try {
-				is = client.getInputStream();
-				BufferedReader br = new BufferedReader(
-						new InputStreamReader(is));
+				InputStream is = soc.getInputStream();
+				OutputStream os = soc.getOutputStream();
+				soc.setSoTimeout(5000); //设定超时时间
 				int readint;
 				char c;
-				byte[] buf = new byte[1000];
-				OutputStream os = client.getOutputStream();
-				client.setSoTimeout(50);
+				byte[] buf = new byte[1024];
 				byte[] data = null;
-				String cmd = "";
-				String queryurl = "";
 				int state = 0;
-				String queryresource;
-				String head;
+				String method = "";//传输方式，GET或POST
+				String queryurl = ""; //请求URL信息
+				String queryresource = "";
+				String head = "";
+				boolean start = false;
 				while (true) {
 					readint = is.read();
 					c = (char) readint;
 					boolean space=Character.isWhitespace(readint);
-					switch (state) {
-					case 0:
-						if (space)
-							continue;
-						state = 1;
-					case 1:
-						if (space) {
-							state=2;
-							continue;
-						}
-						cmd+=c;
-						continue;
-					case 2:
-						if(space)
-							continue;
-						state=3;
-					case 3:
-						if(space)
-							break;
-						queryurl+=c;
-						continue;
+					if(!space){
+						start = true;
+						method+=c;
 					}
-					break;
+					if(start && space){
+						break;
+					}
+				}
+				start = false;
+				while(true){
+					readint = is.read();
+					c = (char) readint;
+					boolean space=Character.isWhitespace(readint);
+					if(!space){
+						start = true;
+						queryurl+=c;
+					}
+					if(start && space){
+						break;
+					}
 				}
 
 				queryresource=getQueryResource(queryurl);
 				head=getHead(queryresource);
 
 				while (true) {
-					try {
-						if ((readint = is.read(buf)) > 0) {
-						//	System.out.write(buf);
-						} else if (readint < 0)
-							break;
-					} catch (InterruptedIOException e) {
-						data = getFileByte("webapp"+queryresource);
-					}
-
+					data = getFileByte("http"+queryresource);
 					if (data != null) {
-						os.write(head.getBytes("utf-8"));
 						os.write(data);
 						os.close();
 						break;
 					}
 				}
+			} catch (java.net.SocketTimeoutException e){
+				System.out.println("time out");
+				return;
 			} catch (IOException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 
 		}
+	}
+	
+	public static void main(String[] args) {
+		new MyHtmlServer();
 	}
 }
